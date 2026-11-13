@@ -259,8 +259,14 @@ def handle_text(insp, t):  # 문장 하나를 보고 무엇을 할지 정하는 
         return {"kind": "command", "command": "undo", **undo_last(insp)}  # 마지막 기록을 되돌림
     if cmd == "progress":  # "몇 개 남았어"
         p = progress(insp)  # 진행률 계산
-        left = [it["itemName"] for it in insp["items"].values() if it["status"] == "미확인"]  # 아직 안 한 항목 이름들
-        return {"kind": "command", "command": "progress", "speech": speak(f"{p['total']}개 중 {p['recorded']}개 기록했습니다. 남은 항목은 {', '.join(left) or '없습니다'}.")}  # 남은 항목을 읽어 줌
+        left = [it for it in insp["items"].values() if it["status"] == "미확인" and it["itemCode"] not in insp["skipped"]]  # 아직 안 한 항목 (점검표 순서)
+        if not left:
+            msg = f"{p['total']}개 모두 기록했습니다. 점검 끝이라고 하세요."
+        else:
+            nxt = ", ".join(it["itemName"] for it in left[:3])  # 다 읽으면 너무 길어서 앞의 3개만
+            more = f" 등 {len(left)}개" if len(left) > 3 else ""
+            msg = f"{p['total']}개 중 {p['recorded']}개 기록, {len(left)}개 남았습니다. 다음은 {nxt}{more}."
+        return {"kind": "command", "command": "progress", "speech": speak(msg)}  # 개수 + 다음 3개만 읽어 줌
     if cmd == "repeat":  # "다시 읽어 줘"
         return {"kind": "command", "command": "repeat", "speech": insp["lastSpeech"]}  # 마지막 안내를 다시
     if cmd == "finish":  # "점검 끝"
@@ -304,6 +310,9 @@ def handle_text(insp, t):  # 문장 하나를 보고 무엇을 할지 정하는 
         P.validate(func, kw)  # 허용값인지 검사
     except ValueError as e:  # 형식이 깨졌거나 허용값 밖이면
         return {"kind": "retry", "llmRaw": raw, "reason": str(e), "speech": speak("다시 말씀해 주세요.")}  # 기록하지 않고 다시 말하게 함
+    if not P.related(t, func):  # 말에 그 항목을 가리키는 단어가 없음 → STT가 망가뜨린 말을 LLM이 지어낸 것으로 보고 기록 안 함
+        print(f"[차단] 말과 관련 없는 항목: \"{t}\" → {raw}")
+        return {"kind": "retry", "llmRaw": raw, "reason": "말과 관련 없는 항목", "speech": speak("잘 못 들었습니다. 항목 이름을 넣어 다시 말씀해 주세요.")}
 
     code = P.FUNC_TO_CODE[func]  # 함수 이름 → 검사기준 번호 (esc_10 → 3.10)
     verdict, criteria = P.judge(code, kw)  # 규칙 엔진으로 판정 (말한 판정 또는 측정값으로 계산, 선택형은 선택값 기록)
@@ -321,7 +330,7 @@ def handle_text(insp, t):  # 문장 하나를 보고 무엇을 할지 정하는 
     if verdict is None:  # 판정을 정할 수 없으면
         insp["pending"] = {"itemCode": code, "expect": "verdict"}  # 판정 질문 대기 상태로
         return {"kind": "question", "item": item, "llmRaw": raw, "speech": speak("적합인가요, 부적합인가요?")}  # 질문
-    if P.ALL_ITEMS[code]["hasLocation"] and item["location"] is None:  # 상·하부 구분 항목인데 위치를 안 말했으면
+    if P.ALL_ITEMS[code]["hasLocation"] and item["location"] is None and verdict != "해당없음":  # 상·하부 구분 항목인데 위치를 안 말했으면 (해당없음이면 위치가 의미 없으니 안 물음)
         insp["pending"] = {"itemCode": code, "expect": "location"}  # 위치 질문 대기 상태로
         return {"kind": "question", "item": item, "llmRaw": raw, "speech": speak("상부, 하부 중 어디인가요?")}  # 질문
     return {"kind": "recorded", "item": item, "llmRaw": raw, "speech": speak(read_back(item))}  # 다 채워졌으면 기록 완료 + 다시 읽어 주기

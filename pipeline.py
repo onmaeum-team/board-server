@@ -8,6 +8,7 @@
 import ast  # LLM 출력의 인자 부분(판정='부적합', ...)을 안전하게 파이썬 값으로 읽는 데 씀
 import difflib  # 비슷한 말 찾기 (STT가 '취소'를 '치소'로 받아쓴 경우)
 import io  # 받은 WAV 바이트를 파일처럼 읽기
+import json  # 항목 키워드 파일 읽기
 import os  # 환경변수 (어떤 모델을 쓸지)
 import re  # 정규식: 함수 호출 모양 찾기, 문장부호 지우기
 import threading  # 잠금 (NPU·CPU 를 한 번에 한 요청만 쓰게)
@@ -416,7 +417,7 @@ def judge(code: str, kw: dict):  # 규칙 엔진: 판정을 정하는 함수
 # ───────────────────────── 4. 명령 · 대답 ─────────────────────────
 COMMANDS = {  # 음성 명령 이름 → 그 명령으로 알아들을 단어들 (띄어쓰기는 무시하고 비교)
     # 치소·취서·추소 = Whisper 가 '취소'를 자주 이렇게 받아씀 (11/13 실제 로그)
-    "undo": ["취소", "치소", "취서", "추소", "방금 거 지워", "되돌려", "지워 줘", "잘못 말했"],  # 마지막 기록 취소
+    "undo": ["취소", "치소", "취서", "추소", "방금 거 지워", "되돌려", "돌려줘", "지워 줘", "삭제", "삭제해 줘", "잘못 말했"],  # 돌려·지워 단독은 점검 문장에도 나와서(돌려도 반응 없어, 지워졌어) 안 씀  # 마지막 기록 취소
     "progress": ["몇 개 남았", "얼마나 남았"],  # 남은 항목 안내
     "finish": ["점검 끝", "점검 종료", "다 했어"],  # 점검 끝 → 누락 확인
     "repeat": ["다시 읽어", "뭐라고"],  # 마지막 안내 다시 듣기
@@ -449,6 +450,31 @@ def match_command(text: str):  # 문장이 음성 명령인지 찾는 함수
         if score >= 0.6:
             return best
     return None  # 명령이 아니면 None
+
+
+# ───────────── LLM 결과가 말과 관련 있는지 확인 ─────────────
+# item_keywords.json: 학습 데이터(function_call_train.csv 5만 문장)에서 함수마다 자주 나오는 글자 두 개짜리 조각.
+# 여러 함수에 흔한 조각(좌측·밀리·정상·상부 등)은 뺐다. 평가 데이터 6,250문장은 100% 통과.
+# STT가 말을 망가뜨려서 LLM이 아무 항목이나 지어낸 경우("돼 둘이 양호해요" → 3.10 적합)를 막는다.
+_KW_PATH = Path(__file__).with_name("item_keywords.json")
+try:
+    ITEM_KEYWORDS = {f: set(v) for f, v in json.loads(_KW_PATH.read_text(encoding="utf-8")).items()}
+except Exception as e:
+    print("item_keywords.json 을 읽지 못함 (관련성 검사 끔):", e)
+    ITEM_KEYWORDS = {}
+
+
+def related(text: str, func: str) -> bool:  # 말 안에 그 항목을 가리키는 조각이 하나라도 있나
+    kws = ITEM_KEYWORDS.get(func)
+    if not kws:  # 학습 데이터에 없는 함수면 검사하지 않음
+        return True
+    s = re.sub(r"[^가-힣]", "", text)
+    if any(ch in kws and ch in s for ch in ONE_CHAR):  # '콤'처럼 한 글자짜리 부품 이름
+        return True
+    return any(s[i:i + 2] in kws for i in range(len(s) - 1))
+
+
+ONE_CHAR = ["콤"]  # 한 글자라 두 글자 조각으로는 못 잡는 부품 이름
 
 
 def match_answer(text: str, expect: str):  # 추가 질문의 대답을 찾는 함수
