@@ -272,6 +272,8 @@ def handle_text(insp, t):  # 문장 하나를 보고 무엇을 할지 정하는 
         p = progress(insp)
         msg = f"남은 {len(left)}개 항목을 미점검으로 남깁니다. 화면에서 확인하고 제출해 주세요." if left else "모든 항목을 기록했습니다. 화면에서 확인하고 제출해 주세요."
         return {"kind": "command", "command": "finish", "missing": [], "speech": speak(msg)}  # 앱은 finish + 빈 missing 이면 검토 화면을 엶
+    if cmd == "skip" and not insp["pending"]:  # 묻는 항목이 없는데 "건너뛰기" → LLM에 넘기지 않고 안내
+        return {"kind": "command", "command": "skip", "speech": speak("지금 묻고 있는 항목이 없습니다. 남은 항목을 모두 넘기려면 나머지 건너뛰기라고 하세요.")}
     if cmd == "skip" and insp["pending"]:  # "건너뛰기" (묻고 있는 항목이 있을 때만)
         code = insp["pending"]["itemCode"]  # 묻고 있던 항목
         insp["pending"] = None  # 질문 끝
@@ -289,7 +291,11 @@ def handle_text(insp, t):  # 문장 하나를 보고 무엇을 할지 정하는 
             return {"kind": "answered", "item": item, "speech": speak(read_back(item))}  # 채운 결과를 다시 읽어 줌
         # 대답이 아니면 아래 LLM으로 넘어감 (다른 항목을 말한 경우)
 
-    # 3) LLM
+    # 3) 짧은 말인데 명령도 대답도 아니면 LLM에 넣지 않음 (넣으면 없는 항목을 지어낼 수 있음)
+    if len(P.compact(t)) <= P.SHORT_LEN:
+        return {"kind": "retry", "reason": "짧은 말", "speech": speak("잘 못 들었습니다. 다시 말씀해 주세요.")}
+
+    # 4) LLM
     raw = P.llm(t)  # 문장을 LLM에 넣어 함수 호출 문자열을 받음
     try:
         func, kw = P.parse_call(raw)  # 함수 이름과 인자로 나눔
@@ -311,7 +317,7 @@ def handle_text(insp, t):  # 문장 하나를 보고 무엇을 할지 정하는 
                  "updatedAt": datetime.now().isoformat()})  # 기록 시각
     insp["log"].append({"itemCode": code, "before": before, "added": added})  # 기록 순서에 추가 (취소할 때 이걸로 되돌림)
 
-    # 4) 빈칸이 있으면 추가 질문
+    # 5) 빈칸이 있으면 추가 질문
     if verdict is None:  # 판정을 정할 수 없으면
         insp["pending"] = {"itemCode": code, "expect": "verdict"}  # 판정 질문 대기 상태로
         return {"kind": "question", "item": item, "llmRaw": raw, "speech": speak("적합인가요, 부적합인가요?")}  # 질문

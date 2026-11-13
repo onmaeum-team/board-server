@@ -6,6 +6,7 @@
 보드가 오기 전에는 노트북에서 그대로 돌리고, STT·LLM·TTS 자리만 실제 모델로 바꾸면 된다.
 """
 import ast  # LLM 출력의 인자 부분(판정='부적합', ...)을 안전하게 파이썬 값으로 읽는 데 씀
+import difflib  # 비슷한 말 찾기 (STT가 '취소'를 '치소'로 받아쓴 경우)
 import io  # 받은 WAV 바이트를 파일처럼 읽기
 import os  # 환경변수 (어떤 모델을 쓸지)
 import re  # 정규식: 함수 호출 모양 찾기, 문장부호 지우기
@@ -413,21 +414,40 @@ def judge(code: str, kw: dict):  # 규칙 엔진: 판정을 정하는 함수
 
 
 # ───────────────────────── 4. 명령 · 대답 ─────────────────────────
-COMMANDS = {  # 음성 명령 이름 → 그 명령으로 알아들을 단어들
-    "undo": ["취소", "방금 거 지워", "되돌려"],  # 마지막 기록 취소
+COMMANDS = {  # 음성 명령 이름 → 그 명령으로 알아들을 단어들 (띄어쓰기는 무시하고 비교)
+    # 치소·취서·추소 = Whisper 가 '취소'를 자주 이렇게 받아씀 (11/13 실제 로그)
+    "undo": ["취소", "치소", "취서", "추소", "방금 거 지워", "되돌려", "지워 줘", "잘못 말했"],  # 마지막 기록 취소
     "progress": ["몇 개 남았", "얼마나 남았"],  # 남은 항목 안내
     "finish": ["점검 끝", "점검 종료", "다 했어"],  # 점검 끝 → 누락 확인
     "repeat": ["다시 읽어", "뭐라고"],  # 마지막 안내 다시 듣기
     # skip_all 은 skip 보다 먼저 검사해야 함 ("나머지 건너뛰기" 안에 "건너뛰기"가 들어 있어서)
-    "skip_all": ["나머지 건너뛰", "나머지 다 건너뛰", "전부 건너뛰", "모두 건너뛰", "다 건너뛰", "나머지 넘어가", "나머지 미점검"],  # 남은 항목 전부 미점검 → 검토 화면
-    "skip": ["건너뛰기", "건너뛰어", "넘어가"],  # 묻고 있는 항목을 미점검으로 남김
+    # '머지 건' = 나머지/내머지/아머지 + 건너뛰/건너띠/건노 (11/13 실제 로그)
+    "skip_all": ["머지 건", "나머지 넘어가", "나머지 미점검", "전부 건너", "모두 건너", "다 건너"],  # 남은 항목 전부 미점검 → 검토 화면
+    "skip": ["건너뛰", "건너띠", "건너 뛰", "넘어가", "패스"],  # 묻고 있는 항목을 미점검으로 남김
 }
 
 
+SHORT_LEN = 5  # 띄어쓰기·문장부호를 빼고 이 글자 수 이하면 '짧은 말' (점검 내용은 보통 이보다 김)
+
+
+def compact(text: str) -> str:  # 한글·영문·숫자만 남김 ("취소 해." → "취소해")
+    return re.sub(r"[^가-힣A-Za-z0-9]", "", text)
+
+
 def match_command(text: str):  # 문장이 음성 명령인지 찾는 함수
-    for cmd, words in COMMANDS.items():  # 명령 목록을 하나씩 보면서
-        if any(w in text for w in words):  # 문장 안에 그 명령 단어가 하나라도 있으면
-            return cmd  # 그 명령 이름을 돌려줌
+    c = compact(text)
+    for cmd, words in COMMANDS.items():  # 1) 명령 단어가 문장 안에 그대로 있으면
+        if any(compact(w) in c for w in words):
+            return cmd
+    if len(c) <= SHORT_LEN + 2:  # 2) 짧은 말이면 STT가 조금 틀려도 비슷한 명령 단어로 인정 ("치소" → 취소, "건너뛰기요" → 건너뛰기)
+        best, score = None, 0.0
+        for cmd, words in COMMANDS.items():
+            for w in words:
+                s = difflib.SequenceMatcher(None, c, compact(w)).ratio()
+                if s > score:
+                    best, score = cmd, s
+        if score >= 0.6:
+            return best
     return None  # 명령이 아니면 None
 
 
