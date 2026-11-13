@@ -126,12 +126,12 @@ export ONMAEUM_LLM_CT2=/home/orangepi/models/Llama-3.2-1B-Escalator-ct2
 서버를 다시 켜면 이 파일들을 읽어 이력과 지난 점검을 되살립니다.
 
 ## 남은 일
-- [ ] 보드 CPU 에서 실행·속도 측정 (임창수)
-- [ ] `.rkllm` 변환 + `rkllm_runner.py` (임창수)
-- [ ] 보드 TTS (`tts_runner.py`) + 앱 음성 재생 (임창수)
-- [ ] 핫스팟, 자동 실행, SQLite (정래원)
-- [ ] 교정 사전(`CORRECTIONS`), 측정값 판정 규칙 추가 (조해리)
-- [ ] 학습 데이터에 '점검과 상관없는 말' 예시 추가 검토 (임창수)
+- [ ] 보드 CPU 에서 실행·속도 측정 
+- [ ] `.rkllm` 변환 + `rkllm_runner.py` 
+- [ ] 보드 TTS (`tts_runner.py`) + 앱 음성 재생 
+- [ ] 핫스팟, 자동 실행, SQLite
+- [ ] 교정 사전(`CORRECTIONS`), 측정값 판정 규칙 추가 
+- [ ] 학습 데이터에 '점검과 상관없는 말' 예시 추가 검사
 - [ ] 자체점검 주기 연결표 팀 확인 ([`docs/자체점검_주기_연결표.md`](docs/자체점검_주기_연결표.md))
 
 ## 라이선스 · 모델
